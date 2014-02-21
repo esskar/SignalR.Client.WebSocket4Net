@@ -2,7 +2,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNet.SignalR.Client;
-using Microsoft.AspNet.SignalR.Client.Infrastructure;
 using Microsoft.AspNet.SignalR.Client.Transports;
 using SuperSocket.ClientEngine;
 using WebSocket4Net;
@@ -15,8 +14,8 @@ namespace SignalR.Client.WebSocket4Net
         private WebSocket _webSocket;
         private WebSocketConnectionInfo _connectionInfo;
         private TaskCompletionSource<object> _connectCompletionSource;
-        private bool _isOpen;
-
+        private bool _connected;
+        
         public WebSocket4NetTransport()
         {
             _disconnectToken = CancellationToken.None;
@@ -41,7 +40,7 @@ namespace SignalR.Client.WebSocket4Net
             _connectionInfo = new WebSocketConnectionInfo(connection, connectionData);
 
             _connectCompletionSource = new TaskCompletionSource<object>();
-            this.Connect().ContinueWith(t =>
+            this.ConnectAsync().ContinueWith(t =>
             {
                 if (t.IsFaulted)
                 {
@@ -58,7 +57,26 @@ namespace SignalR.Client.WebSocket4Net
 
         public Task Send(IConnection connection, string data, string connectionData)
         {
-            throw new NotImplementedException();
+            if (connection == null)            
+                throw new ArgumentNullException("connection");
+
+            return this.SendAsymc(connection, data);
+        }
+
+        private Task SendAsymc(IConnection connection, string data)
+        {
+            return Task.Run(() =>
+            {
+                if (_webSocket.State != WebSocketState.Open)
+                {
+                    var ex = new InvalidOperationException("Data cannot be sent during web socket reconnect.");
+                    connection.OnError(ex);
+
+                    throw ex;
+                }
+
+                _webSocket.Send(data);
+            }, _disconnectToken);
         }
 
         public void Abort(IConnection connection, TimeSpan timeout, string connectionData)
@@ -81,7 +99,7 @@ namespace SignalR.Client.WebSocket4Net
             get { return true; }
         }
 
-        private Task Connect(bool reconnecting = false)
+        private Task ConnectAsync(bool reconnecting = false)
         {
             return Task.Run(() =>
             {
@@ -123,7 +141,7 @@ namespace SignalR.Client.WebSocket4Net
         private void OnWebSocketError(object sender, ErrorEventArgs errorEventArgs)
         {
             _connectionInfo.Connection.OnError(errorEventArgs.Exception);
-            if (!_isOpen)
+            if (!_connected)
                 _connectCompletionSource.SetException(errorEventArgs.Exception);
         }
 
@@ -144,7 +162,7 @@ namespace SignalR.Client.WebSocket4Net
 
         private void OnWebSocketOpened(object sender, EventArgs eventArgs)
         {
-            _isOpen = true;
+            _connected = true;
             _connectCompletionSource.SetResult(null);
         }
 
